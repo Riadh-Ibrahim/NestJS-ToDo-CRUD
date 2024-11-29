@@ -1,15 +1,14 @@
-import { IsNotEmpty, IsString, Max, Min, ValidationArguments } from "class-validator";
-import { RequiredFieldErrorMessage, maxLengthErrorMessage, minLengthErrorMessage } from "src/common/errors";
+import { IsNotEmpty, IsString, MinLength, MaxLength } from 'class-validator';
 
 export class AddTodoDto {
   @IsString()
-  @IsNotEmpty(RequiredFieldErrorMessage( {targetName: 'name'} as ValidationArguments))
-  @Min(3, minLengthErrorMessage(3))
-  @Max(10, maxLengthErrorMessage(10))
+  @IsNotEmpty({ message: 'The name field is required.' })
+  @MinLength(3, { message: 'The name must be at least 3 characters long.' })
+  @MaxLength(10, { message: 'The name must not exceed 10 characters.' })
   name: string;
 
   @IsString()
-  @IsNotEmpty(RequiredFieldErrorMessage( {targetName: 'name'} as ValidationArguments))
-  @Min(10, minLengthErrorMessage(10))
+  @IsNotEmpty({ message: 'The description field is required.' })
+  @MinLength(10, { message: 'The description must be at least 10 characters long.' })
   description: string;
 }

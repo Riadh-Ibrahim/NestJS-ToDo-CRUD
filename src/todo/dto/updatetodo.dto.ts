@@ -7,13 +7,14 @@ export class UpdateTodoDto {
   @IsOptional()
   @Min(3, minLengthErrorMessage(3))
   @Max(10, maxLengthErrorMessage(10))
-  name: string;
+  name?: string;
 
   @IsString()
   @IsOptional()
   @Min(10, minLengthErrorMessage(10))
-  description: string;
+  description?: string;
 
   @IsEnum(TodoStatusEnum)
-  status: TodoStatusEnum;
+  @IsOptional()
+  status?: TodoStatusEnum;
 }

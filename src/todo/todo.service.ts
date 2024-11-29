@@ -1,14 +1,14 @@
-import { Injectable, Inject , NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Todo } from './entities/todo';
 import { TodoStatusEnum } from './todo-status.enum';
 import { AddTodoDto } from './dto/addtodo.dto';
 import { UpdateTodoDto } from './dto/updatetodo.dto';
 import { TodoEntity } from './entities/todo.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Like, SelectQueryBuilder } from 'typeorm';
 import { SearchTodoDto } from './dto/searchtodo.dto';
 import constants from '../constants';
-import { Like } from 'typeorm';
+import { mapAddTodoDtoToEntity, mapUpdateTodoDtoToEntity } from '.././todo/mappers/todo.mapper';
 
 @Injectable()
 export class TodoService {
@@ -16,42 +16,14 @@ export class TodoService {
 
   constructor(
     @InjectRepository(TodoEntity)
-    private todoRepository: Repository<TodoEntity>,
-    @Inject(constants.uuid) private generateUUID: () => string,
+    private readonly todoRepository: Repository<TodoEntity>,
+    @Inject(constants.uuid) private readonly generateUUID: () => string,
   ) {}
-
-  getAllTodos(): Todo[] {
-    return this.todos;
-  }
-
-  async getAllTodosV2() {
-    return await this.todoRepository.find();
-  }
-
-  async getAllTodosPaginated(page = 1, limit = 4) {
-    let todos, total;
-    [todos, total] = await this.todoRepository.findAndCount({
-      skip: (page - 1) * limit,
-      take: limit,
-    });
-    return {
-      page,
-      limit,
-      total,
-      data: todos,
-    };
-  }
-
-  async getTodoById(id: string) {
-    const todo = await this.todoRepository.findOne({where:{id: String(id)}});
-    if (todo) return todo;
-    throw new NotFoundException(`Todo with id ${id} not found`);
-  }
 
   addTodo(newTodo: AddTodoDto): Todo {
     const { name, description } = newTodo;
     const id = this.generateUUID();
-    const todo = {
+    const todo: Todo = {
       id,
       name,
       description,
@@ -62,77 +34,115 @@ export class TodoService {
     return todo;
   }
 
-  async addTodoV2(newTodo: AddTodoDto) {
-    const todo = this.todoRepository.create(newTodo);
-    return await this.todoRepository.save(todo);
+  async addTodoV2(newTodo: AddTodoDto): Promise<TodoEntity> {
+    const todo = mapAddTodoDtoToEntity(newTodo);
+    return this.todoRepository.save(todo);
   }
 
-  deleteTodoById(id: string) {
-    const todo = this.getTodoById(id);
-    if (todo) {
-      this.todos = this.todos.filter((todo) => todo.id !== id);
-    }
-    return {
-      message: `Todo with id ${id} has been deleted`,
-      count: 1,
-    };
-  }
-
-  async softDeleteTodoById(id: string) {
-    const todo = await this.todoRepository.findOne({ where: { id } });
+  updateTodoById(id: string, newTodo: Partial<UpdateTodoDto>): Todo {
+    const todo = this.todos.find((t) => t.id === id);
     if (!todo) {
       throw new NotFoundException(`Todo with id ${id} not found`);
     }
-    return await this.todoRepository.softDelete(id);
-  }
-
-  async restoreTodoById(id: string) {
-    const todo = await this.todoRepository.findOne({ where: { id } });
-    if (!todo) {
-      throw new NotFoundException(`Todo with id ${id} not found`);
-    }
-    return await this.todoRepository.restore(id);
-  }
-
-  updateTodoById(id: string, newTodo: Partial<UpdateTodoDto>) {
-    const todo = this.getTodoById(id);
-    todo.description = newTodo.description ?? todo.description;
-    todo.name = newTodo.name ?? todo.name;
-    todo.status = newTodo.status ?? todo.status;
+    Object.assign(todo, newTodo);
     return todo;
   }
 
   async updateTodoByIdV2(id: string, newTodo: Partial<UpdateTodoDto>) {
+    const todo = await this.getTodoById(id);
+    const updatedTodo = mapUpdateTodoDtoToEntity(newTodo, todo);
+    return this.todoRepository.save(updatedTodo);
+  }
+
+  async deleteTodoById(id: string) {
+    const todo = await this.getTodoById(id);
+    this.todos = this.todos.filter((t) => t.id !== id);
+    return { message: `Todo with id ${id} has been deleted`, count: 1 };
+  }
+
+  async softDeleteTodoById(id: string) {
+    await this.getTodoById(id);
+    return this.todoRepository.softDelete(id);
+  }
+
+  async restoreTodoById(id: string) {
+    await this.getTodoById(id);
+    return this.todoRepository.restore(id);
+  }
+
+  async countTodoByStatus(status: TodoStatusEnum): Promise<number> {
+    return this.todoRepository.count({ where: { status } });
+  }
+
+  async getTodoStatusCount() {
+    const active = await this.countTodoByStatus(TodoStatusEnum.active);
+    const waiting = await this.countTodoByStatus(TodoStatusEnum.waiting);
+    const done = await this.countTodoByStatus(TodoStatusEnum.done);
+    return { active, waiting, done };
+  }
+
+  async getAllTodosV2() {
+    return this.todoRepository.find();
+  }
+
+  async getTodoById(id: string): Promise<TodoEntity> {
     const todo = await this.todoRepository.findOne({ where: { id } });
     if (!todo) {
       throw new NotFoundException(`Todo with id ${id} not found`);
     }
-    return await this.todoRepository.update(id, newTodo);
+    return todo;
   }
 
-  async getTodoStatusCount() {
-    const active = await this.todoRepository.count({ where: { status: TodoStatusEnum.actif } });
-    const waiting = await this.todoRepository.count({ where: { status: TodoStatusEnum.waiting } });
-    const done = await this.todoRepository.count({ where: { status: TodoStatusEnum.done } });
-    return { active, waiting, done };
-  }
-
-  async countTodoByStatus(status: TodoStatusEnum) {
-    return await this.todoRepository.count({ where: { status } });
-  }
-
-  async searchTodo(param: SearchTodoDto) {
-    let whereClause = {};
-    if (param.status) {
-      whereClause = { ...whereClause, status: param.status };
+  async getTodos(
+    name?: string,
+    description?: string,
+    status?: TodoStatusEnum,
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<{ todos: TodoEntity[]; total: number }> {
+    // Validate that if name or description is provided, status must also be present
+    if (!((name || description) && status)) {
+      throw new BadRequestException('Status must be provided if name or description is specified.');
     }
-    if (param.criteria) {
-      whereClause = {
-        ...whereClause,
-        name: Like(`%${param.criteria}%`),
-        description: Like(`%${param.criteria}%`),
-      };
+
+    const query = this.todoRepository.createQueryBuilder('todo');
+
+    // If only status is provided, filter by status
+    if (status) {
+      query.andWhere('todo.status = :status', { status });
     }
-    return await this.todoRepository.find({ where: whereClause });
+
+    // If name is provided, filter by name
+    if (name) {
+      query.andWhere('todo.name LIKE :name', { name: `%${name}%` });
+    }
+
+    // If description is provided, filter by description
+    if (description) {
+      query.andWhere('todo.description LIKE :description', { description: `%${description}%` });
+    }
+
+    // Calculate total count of results before pagination
+    const total = await query.getCount();
+
+    // Apply pagination
+    query.skip((page - 1) * limit).take(limit);
+
+    const todos = await query.getMany();
+
+    // Throw an exception if no Todos are found
+    if (todos.length === 0) {
+      throw new NotFoundException('No Todo items found for the given criteria.');
+    }
+
+    return { todos, total };
+  }
+
+  async getAllTodosPaginated(page = 1, limit = 4) {
+    const [todos, total] = await this.todoRepository.findAndCount({
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { page, limit, total, data: todos };
   }
 }
